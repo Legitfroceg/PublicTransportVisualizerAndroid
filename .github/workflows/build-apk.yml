@@ -1,0 +1,59 @@
+name: Build APK from zip
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract project zip
+        run: |
+          set -e
+          ZIP=$(find . -path ./.git -prune -o -type f -name '*.zip' -print | head -n 1)
+          if [ -n "$ZIP" ]; then
+            echo "Extracting: $ZIP"
+            mkdir -p _extracted
+            unzip -q -o "$ZIP" -d _extracted
+          else
+            echo "No .zip found, using the repository files directly"
+          fi
+
+      - name: Locate Gradle project
+        id: locate
+        run: |
+          set -e
+          SETTINGS=$(find _extracted -name 'settings.gradle.kts' 2>/dev/null | head -n 1 || true)
+          if [ -z "$SETTINGS" ]; then
+            SETTINGS=$(find . -path ./.git -prune -o -name 'settings.gradle.kts' -print | head -n 1)
+          fi
+          if [ -z "$SETTINGS" ]; then
+            echo "::error::settings.gradle.kts not found. Repo contents:"
+            find . -not -path './.git/*' -maxdepth 4 | head -60
+            exit 1
+          fi
+          DIR=$(dirname "$SETTINGS")
+          echo "Gradle project: $DIR"
+          ls -la "$DIR/app/src/main/assets"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Build debug APK
+        run: gradle -p "${{ steps.locate.outputs.dir }}" assembleDebug --no-daemon --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TransitIntel-debug-apk
+          path: ${{ steps.locate.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
